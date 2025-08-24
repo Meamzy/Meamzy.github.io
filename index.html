@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mycopunk Mod Solver</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #111318;
+            --bg-secondary: #1d2027;
+            --bg-tertiary: #2a2e37;
+            --text-primary: #f0f1f2;
+            --text-secondary: #9ea3ae;
+            --accent-primary: #ff7b00;
+            --accent-secondary: #00aaff;
+            --accent-danger: #e53e3e;
+            --border-color: #3c414d;
+            
+            --rarity-green: #4caf50;
+            --rarity-blue: #2196f3;
+            --rarity-purple: #9c27b0;
+            --rarity-orange: #ff9800;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #app-container {
+            display: grid;
+            grid-template-columns: 380px 1fr;
+            gap: 20px;
+            padding: 20px;
+            width: 100%;
+            height: 100%;
+        }
+
+        #controls-panel {
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .controls-header {
+            padding: 15px 20px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .controls-header h1 { margin: 0; font-size: 1.5em; }
+        .controls-header p { margin: 5px 0 0; color: var(--text-secondary); font-size: 0.9em; }
+
+        .controls-body {
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 25px;
+        }
+
+        .control-group h2 {
+            margin: 0 0 15px 0;
+            font-size: 1.1em;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 8px;
+        }
+        
+        label { display: block; margin-bottom: 8px; font-weight: 600; color: var(--text-secondary); font-size: 0.9em; }
+        .input-row { display: flex; gap: 15px; }
+
+        input[type="number"] {
+            width: 100%;
+            padding: 10px;
+            background-color: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            border-radius: 6px;
+            font-size: 1em;
+        }
+
+        #creator-canvas-container {
+            background-color: var(--bg-primary);
+            border-radius: 8px;
+            padding: 10px;
+            margin: 10px 0;
+            height: 220px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .radio-group { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .radio-group label {
+            text-align: center; color: white; margin: 0; cursor: pointer; padding: 10px;
+            border-radius: 6px; border: 2px solid transparent; font-weight: 600; transition: all 0.2s;
+        }
+        .radio-group input[type="radio"] { display: none; }
+        #rarity-green:checked + label { border-color: white; box-shadow: 0 0 10px var(--rarity-green); }
+        #rarity-blue:checked + label { border-color: white; box-shadow: 0 0 10px var(--rarity-blue); }
+        #rarity-purple:checked + label { border-color: white; box-shadow: 0 0 10px var(--rarity-purple); }
+        #rarity-orange:checked + label { border-color: white; box-shadow: 0 0 10px var(--rarity-orange); }
+        label[for="rarity-green"] { background-color: var(--rarity-green); }
+        label[for="rarity-blue"] { background-color: var(--rarity-blue); }
+        label[for="rarity-purple"] { background-color: var(--rarity-purple); }
+        label[for="rarity-orange"] { background-color: var(--rarity-orange); }
+
+        .checkbox-container { display: flex; align-items: center; margin-top: 15px; }
+        .checkbox-container input { margin-right: 10px; }
+
+        button {
+            width: 100%; padding: 12px; font-size: 1.1em; font-weight: bold; color: white;
+            border: none; border-radius: 6px; cursor: pointer; transition: all 0.2s;
+            background: linear-gradient(45deg, var(--accent-primary), #d16600);
+        }
+        button:hover:not(:disabled) { background: linear-gradient(45deg, #ff8c1a, #e67300); }
+        button:disabled { background: var(--bg-tertiary); color: var(--text-secondary); cursor: not-allowed; }
+        
+        button.cancel-btn {
+            background: linear-gradient(45deg, var(--accent-danger), #b92c2c);
+        }
+        button.cancel-btn:hover:not(:disabled) {
+            background: linear-gradient(45deg, #f56565, #c53030);
+        }
+
+        #mod-list-container { max-height: 250px; overflow-y: auto; padding-right: 5px; }
+        #mod-list { display: flex; flex-direction: column; gap: 10px; }
+        .mod-item { display: flex; align-items: center; background-color: var(--bg-tertiary); padding: 8px; border-radius: 6px; }
+        .mod-preview-canvas { width: 60px; height: 60px; background-color: var(--bg-primary); border-radius: 4px; margin-right: 15px; }
+        .mod-item-info { flex-grow: 1; }
+        .mod-item-info span { font-weight: 600; }
+        .mod-item-info p { margin: 4px 0 0; font-size: 0.8em; color: var(--text-secondary); }
+        .mod-delete-btn { background: transparent; border: none; cursor: pointer; padding: 5px; width: 32px; height: 32px; }
+        .mod-delete-btn svg { fill: var(--text-secondary); transition: fill 0.2s; }
+        .mod-delete-btn:hover svg { fill: #ff4d4d; }
+
+        #canvas-container {
+            background-color: var(--bg-secondary);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+        canvas { display: block; }
+
+        #status-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0,0,0,0.7);
+            color: white;
+            padding: 15px 25px;
+            border-radius: 8px;
+            font-size: 1.2em;
+            font-weight: 600;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        @media (max-width: 1000px) {
+            body { height: auto; overflow-y: auto; }
+            #app-container { grid-template-columns: 1fr; }
+            #controls-panel { order: 2; }
+            #canvas-container { order: 1; height: 60vh; }
+        }
+    </style>
+</head>
+<body>
+    <div id="app-container">
+        <div id="controls-panel">
+            <div class="controls-header">
+                <h1>Mycopunk Solver</h1>
+                <p>Design mods and find the perfect fit.</p>
+            </div>
+            <div class="controls-body">
+                <div class="control-group">
+                    <h2>Board Setup</h2>
+                    <div class="input-row">
+                        <div><label for="board-cols">Columns</label><input type="number" id="board-cols" value="7" min="2" max="15"></div>
+                        <div><label for="board-rows">Rows</label><input type="number" id="board-rows" value="6" min="2" max="15"></div>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <h2>Mod Creator</h2>
+                    <label>Click in the area below to draw a shape:</label>
+                    <div id="creator-canvas-container"><canvas id="creator-canvas"></canvas></div>
+                    <div class="radio-group">
+                        <input type="radio" id="rarity-green" name="rarity" value="#4caf50" checked><label for="rarity-green">Green</label>
+                        <input type="radio" id="rarity-blue" name="rarity" value="#2196f3"><label for="rarity-blue">Blue</label>
+                        <input type="radio" id="rarity-purple" name="rarity" value="#9c27b0"><label for="rarity-purple">Purple</label>
+                        <input type="radio" id="rarity-orange" name="rarity" value="#ff9800"><label for="rarity-orange">Orange</label>
+                    </div>
+                    <div class="checkbox-container">
+                        <input type="checkbox" id="priority-mod"><label for="priority-mod">Maximize this mod's connections</label>
+                    </div>
+                    <button id="add-mod-btn">Add Mod to List</button>
+                </div>
+
+                <div class="control-group">
+                    <h2>Mod List</h2>
+                    <div id="mod-list-container"><div id="mod-list"></div></div>
+                </div>
+                
+                 <div class="control-group">
+                    <h2>Solver</h2>
+                    <button id="solve-btn" disabled>Solve Arrangement</button>
+                 </div>
+            </div>
+        </div>
+
+        <div id="canvas-container">
+            <canvas id="main-canvas"></canvas>
+            <div id="status-message"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        class Hex {
+            constructor(q, r) { this.q = q; this.r = r; this.s = -q - r; }
+            toString() { return `${this.q},${this.r}`; }
+            static fromString(str) {
+                const [q, r] = str.split(',').map(Number);
+                return new Hex(q, r);
+            }
+            add(other) { return new Hex(this.q + other.q, this.r + other.r); }
+            subtract(other) { return new Hex(this.q - other.q, this.r - other.r); }
+            
+            distance(other) {
+                return (Math.abs(this.q - other.q) 
+                      + Math.abs(this.r - other.r) 
+                      + Math.abs(this.s - other.s)) / 2;
+            }
+
+            rotate(center, steps = 1) {
+                let vec = this.subtract(center);
+                for (let i = 0; i < steps; i++) {
+                    const { q, r, s } = vec;
+                    vec = new Hex(-r, -s);
+                }
+                return vec.add(center);
+            }
+        }
+
+        class ModSolverApp {
+            constructor() {
+                this.mainCanvas = document.getElementById('main-canvas');
+                this.mainCtx = this.mainCanvas.getContext('2d');
+                this.creatorCanvas = document.getElementById('creator-canvas');
+                this.creatorCtx = this.creatorCanvas.getContext('2d');
+                
+                this.colsInput = document.getElementById('board-cols');
+                this.rowsInput = document.getElementById('board-rows');
+                this.addModBtn = document.getElementById('add-mod-btn');
+                this.solveBtn = document.getElementById('solve-btn');
+                this.modListContainer = document.getElementById('mod-list');
+                this.statusMessageEl = document.getElementById('status-message');
+
+                this.board = { cols: 7, rows: 6, grid: new Map(), renderProps: {} };
+                this.creator = { cols: 8, rows: 7, grid: new Map(), shape: new Set(), renderProps: {} };
+                this.mods = [];
+                this.solution = null;
+                this.isSolving = false;
+                this.isCancelled = false;
+                this.placementsChecked = 0;
+                this.progressInterval = null;
+
+                this.init();
+            }
+
+            init() {
+                this.setupEventListeners();
+                this.loadMods();
+                this.createGrids();
+                this.resizeAndDrawAll();
+                this.renderModList();
+                this.updateSolveButtonState();
+            }
+            
+            setupEventListeners() {
+                window.addEventListener('resize', () => this.resizeAndDrawAll());
+                this.colsInput.addEventListener('change', () => this.handleBoardResize());
+                this.rowsInput.addEventListener('change', () => this.handleBoardResize());
+                this.creatorCanvas.addEventListener('click', (e) => this.handleCreatorClick(e));
+                this.addModBtn.addEventListener('click', () => this.addModToList());
+                this.solveBtn.addEventListener('click', () => this.handleSolveClick());
+                document.querySelectorAll('input[name="rarity"]').forEach(radio => {
+                    radio.addEventListener('change', () => this.drawCreator());
+                });
+            }
+
+            createGrids() {
+                this.board.grid.clear();
+                for (let q = 0; q < this.board.cols; q++) {
+                    const rOffset = Math.floor(q / 2);
+                    for (let r = -rOffset; r < this.board.rows - rOffset; r++) {
+                        const hex = new Hex(q, r);
+                        this.board.grid.set(hex.toString(), hex);
+                    }
+                }
+                this.creator.grid.clear();
+                for (let q = 0; q < this.creator.cols; q++) {
+                    const rOffset = Math.floor(q / 2);
+                    for (let r = -rOffset; r < this.creator.rows - rOffset; r++) {
+                        const hex = new Hex(q, r);
+                        this.creator.grid.set(hex.toString(), hex);
+                    }
+                }
+            }
+
+            handleBoardResize() {
+                this.board.cols = parseInt(this.colsInput.value);
+                this.board.rows = parseInt(this.rowsInput.value);
+                this.solution = null;
+                this.createGrids();
+                this.resizeAndDrawAll();
+            }
+            
+            handleCreatorClick(event) {
+                const rect = this.creatorCanvas.getBoundingClientRect();
+                const x = event.clientX - rect.left;
+                const y = event.clientY - rect.top;
+                const hex = this.pixelToHex(x, y, this.creator.renderProps);
+                if (this.creator.grid.has(hex.toString())) {
+                    const hexStr = hex.toString();
+                    if (this.creator.shape.has(hexStr)) {
+                        this.creator.shape.delete(hexStr);
+                    } else {
+                        this.creator.shape.add(hexStr);
+                    }
+                    this.drawCreator();
+                }
+            }
+
+            addModToList() {
+                if (this.creator.shape.size === 0) return;
+                const color = document.querySelector('input[name="rarity"]:checked').value;
+                const isPriority = document.getElementById('priority-mod').checked;
+                const shapeCoords = Array.from(this.creator.shape).map(s => Hex.fromString(s));
+                const firstHex = shapeCoords[0];
+                const normalizedShape = shapeCoords.map(h => h.subtract(firstHex));
+                this.mods.push({ id: Date.now(), shape: normalizedShape, color, isPriority });
+                this.creator.shape.clear();
+                this.renderModList();
+                this.drawCreator();
+                this.updateSolveButtonState();
+                this.solution = null;
+                this.drawMainBoard();
+                this.saveMods();
+            }
+            
+            deleteMod(modId) {
+                this.mods = this.mods.filter(m => m.id !== modId);
+                this.renderModList();
+                this.updateSolveButtonState();
+                this.solution = null;
+                this.drawMainBoard();
+                this.saveMods();
+            }
+
+            saveMods() {
+                try {
+                    localStorage.setItem('mycopunkSolverMods', JSON.stringify(this.mods));
+                } catch (e) {
+                    console.error("Could not save mods to localStorage:", e);
+                }
+            }
+
+            loadMods() {
+                try {
+                    const savedMods = localStorage.getItem('mycopunkSolverMods');
+                    if (savedMods) {
+                        const parsedMods = JSON.parse(savedMods);
+                        this.mods = parsedMods.map(mod => ({
+                            ...mod,
+                            shape: mod.shape.map(hexData => new Hex(hexData.q, hexData.r))
+                        }));
+                    }
+                } catch (e) {
+                    console.error("Could not load mods from localStorage:", e);
+                    this.mods = [];
+                }
+            }
+
+            updateSolveButtonState() {
+                if (this.isSolving) {
+                    this.solveBtn.textContent = 'Cancel';
+                    this.solveBtn.classList.add('cancel-btn');
+                    this.solveBtn.disabled = false;
+                } else {
+                    this.solveBtn.textContent = 'Solve Arrangement';
+                    this.solveBtn.classList.remove('cancel-btn');
+                    this.solveBtn.disabled = this.mods.length === 0;
+                }
+            }
+            
+            drawAll() { this.drawMainBoard(); this.drawCreator(); }
+
+            drawMainBoard() {
+                this.mainCtx.clearRect(0, 0, this.mainCanvas.width, this.mainCanvas.height);
+                const { hexSize, offsetX, offsetY } = this.board.renderProps;
+                if (!hexSize || hexSize <= 0) return;
+                this.board.grid.forEach(hex => {
+                    const center = this.hexToPixel(hex, hexSize);
+                    this.drawHexagon(this.mainCtx, center.x + offsetX, center.y + offsetY, hexSize, '#2a2e37', '#3c414d');
+                });
+                if (this.solution) {
+                    this.solution.forEach(placedMod => {
+                        placedMod.absoluteShape.forEach(hex => {
+                            const center = this.hexToPixel(hex, hexSize);
+                            this.drawHexagon(this.mainCtx, center.x + offsetX, center.y + offsetY, hexSize, placedMod.mod.color, 'white', 2);
+                        });
+                    });
+                }
+            }
+
+            drawCreator() {
+                this.creatorCtx.clearRect(0, 0, this.creatorCanvas.width, this.creatorCanvas.height);
+                const { hexSize, offsetX, offsetY } = this.creator.renderProps;
+                if (!hexSize || hexSize <= 0) return;
+                const selectedColor = document.querySelector('input[name="rarity"]:checked').value;
+                this.creator.grid.forEach(hex => {
+                    const center = this.hexToPixel(hex, hexSize);
+                    const isSelected = this.creator.shape.has(hex.toString());
+                    const fillColor = isSelected ? selectedColor : '#111318';
+                    const strokeColor = isSelected ? 'white' : '#3c414d';
+                    this.drawHexagon(this.creatorCtx, center.x + offsetX, center.y + offsetY, hexSize, fillColor, strokeColor);
+                });
+            }
+            
+            renderModList() {
+                this.modListContainer.innerHTML = '';
+                this.mods.forEach(mod => {
+                    const item = document.createElement('div');
+                    item.className = 'mod-item';
+                    item.innerHTML = `<canvas class="mod-preview-canvas" data-mod-id="${mod.id}"></canvas><div class="mod-item-info"><span>${mod.shape.length}-hex Mod</span><p>${mod.isPriority ? 'Priority Mod' : 'Standard Mod'}</p></div><button class="mod-delete-btn" data-id="${mod.id}"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"></path></svg></button>`;
+                    this.modListContainer.appendChild(item);
+                });
+                this.modListContainer.querySelectorAll('.mod-delete-btn').forEach(btn => btn.addEventListener('click', (e) => this.deleteMod(parseInt(e.currentTarget.dataset.id))));
+                this.modListContainer.querySelectorAll('.mod-preview-canvas').forEach(canvas => {
+                    const mod = this.mods.find(m => m.id === parseInt(canvas.dataset.modId));
+                    if (mod) this.drawModPreview(canvas, mod);
+                });
+            }
+            
+            drawModPreview(canvas, mod) {
+                const ctx = canvas.getContext('2d');
+                canvas.width = 60; canvas.height = 60;
+                const bounds = this.getShapeBounds(mod.shape);
+                const props = this.calculateRenderProps(canvas.width, canvas.height, bounds.cols, bounds.rows, true);
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                mod.shape.forEach(hex => {
+                    const relativeHex = hex.subtract(new Hex(bounds.minQ, bounds.minR));
+                    const center = this.hexToPixel(relativeHex, props.hexSize);
+                    this.drawHexagon(ctx, center.x + props.offsetX, center.y + props.offsetY, props.hexSize, mod.color, '#5a616d');
+                });
+            }
+
+            drawHexagon(ctx, x, y, size, fill, stroke, lineWidth = 1.5) {
+                ctx.beginPath();
+                for (let i = 0; i < 6; i++) {
+                    const angle = 2 * Math.PI / 6 * i;
+                    ctx[i === 0 ? 'moveTo' : 'lineTo'](x + size * Math.cos(angle), y + size * Math.sin(angle));
+                }
+                ctx.closePath();
+                ctx.fillStyle = fill;
+                ctx.strokeStyle = stroke;
+                ctx.lineWidth = lineWidth;
+                ctx.fill();
+                ctx.stroke();
+            }
+
+            hexToPixel(hex, size) {
+                const x = size * (3/2 * hex.q);
+                const y = size * (Math.sqrt(3)/2 * hex.q + Math.sqrt(3) * hex.r);
+                return { x, y };
+            }
+
+            pixelToHex(x, y, { hexSize, offsetX, offsetY }) {
+                if (!hexSize) return new Hex(0,0);
+                const pt = { x: (x - offsetX) / hexSize, y: (y - offsetY) / hexSize };
+                const q = (2/3 * pt.x);
+                const r = (-1/3 * pt.x + Math.sqrt(3)/3 * pt.y);
+                return this.hexRound(new Hex(q, r));
+            }
+            
+            hexRound(hex) {
+                let q = Math.round(hex.q), r = Math.round(hex.r), s = Math.round(hex.s);
+                const q_diff = Math.abs(q - hex.q), r_diff = Math.abs(r - hex.r), s_diff = Math.abs(s - hex.s);
+                if (q_diff > r_diff && q_diff > s_diff) q = -r - s;
+                else if (r_diff > s_diff) r = -q - s;
+                return new Hex(q, r);
+            }
+
+            resizeAndDrawAll() {
+                const mainContainer = document.getElementById('canvas-container');
+                this.board.renderProps = this.calculateRenderProps(mainContainer.clientWidth, mainContainer.clientHeight, this.board.cols, this.board.rows, false);
+                this.mainCanvas.width = mainContainer.clientWidth;
+                this.mainCanvas.height = mainContainer.clientHeight;
+                const creatorContainer = document.getElementById('creator-canvas-container');
+                this.creator.renderProps = this.calculateRenderProps(creatorContainer.clientWidth, creatorContainer.clientHeight, this.creator.cols, this.creator.rows, true);
+                this.creatorCanvas.width = creatorContainer.clientWidth;
+                this.creatorCanvas.height = creatorContainer.clientHeight;
+                this.renderModList();
+                this.drawAll();
+            }
+            
+            calculateRenderProps(cWidth, cHeight, gCols, gRows, isPreview) {
+                const PADDING = isPreview ? 0.9 : 0.95;
+                const HEX_WIDTH_MULTI = 1.5;
+                const HEX_HEIGHT_MULTI = Math.sqrt(3);
+                const gridWidth = (gCols * HEX_WIDTH_MULTI) + 0.5;
+                const gridHeight = (gRows * HEX_HEIGHT_MULTI) + (gCols > 1 ? HEX_HEIGHT_MULTI / 2 : 0);
+                const sizeFromWidth = (cWidth * PADDING) / gridWidth;
+                const sizeFromHeight = (cHeight * PADDING) / gridHeight;
+                const hexSize = Math.max(1, Math.min(sizeFromWidth, sizeFromHeight));
+                const totalPixelWidth = gridWidth * hexSize;
+                const totalPixelHeight = gridHeight * hexSize;
+                const offsetX = (cWidth - totalPixelWidth) / 2 + (hexSize);
+                const offsetY = (cHeight - totalPixelHeight) / 2 + (hexSize * HEX_HEIGHT_MULTI / 2);
+                return { hexSize, offsetX, offsetY };
+            }
+            
+            getShapeBounds(shape) {
+                if (shape.length === 0) return { minQ: 0, maxQ: 0, minR: 0, maxR: 0, cols: 1, rows: 1 };
+                let minQ = Infinity, maxQ = -Infinity, minR = Infinity, maxR = -Infinity;
+                shape.forEach(h => {
+                    minQ = Math.min(minQ, h.q); maxQ = Math.max(maxQ, h.q);
+                    minR = Math.min(minR, h.r); maxR = Math.max(maxR, h.r);
+                });
+                return { minQ, maxQ, minR, maxR, cols: maxQ - minQ + 1, rows: maxR - minR + 1 };
+            }
+
+            // --- SOLVER LOGIC ---
+
+            handleSolveClick() {
+                if (this.isSolving) {
+                    this.isCancelled = true;
+                    clearInterval(this.progressInterval);
+                    this.displayMessage('Cancelling...', Infinity);
+                } else {
+                    this.solve();
+                }
+            }
+
+            async solve() {
+                this.isSolving = true;
+                this.isCancelled = false;
+                this.solution = null;
+                this.placementsChecked = 0;
+                this.updateSolveButtonState();
+                this.drawMainBoard();
+
+                this.progressInterval = setInterval(() => {
+                    this.displayMessage(`Solving... (${this.placementsChecked.toLocaleString()} positions checked)`, Infinity);
+                }, 100);
+
+                try {
+                    await new Promise(resolve => setTimeout(resolve, 10));
+
+                    const totalModArea = this.mods.reduce((sum, mod) => sum + mod.shape.length, 0);
+                    if (totalModArea > this.board.grid.size) {
+                        this.displayMessage('Not enough space on board!', 3000);
+                        return;
+                    }
+
+                    const priorityMod = this.mods.find(m => m.isPriority);
+                    let finalSolution = null;
+
+                    if (priorityMod) {
+                        finalSolution = await this.findBestSolutionByPlacingPriorityFirst(priorityMod);
+                    } else {
+                        const sortedMods = [...this.mods].sort((a, b) => b.shape.length - a.shape.length);
+                        finalSolution = await this.backtrack(sortedMods, new Set(), []);
+                    }
+                    this.solution = finalSolution;
+
+                } catch (e) {
+                    if (e.message !== 'Cancelled') throw e;
+                } finally {
+                    clearInterval(this.progressInterval);
+                    this.isSolving = false;
+                    
+                    if (this.isCancelled) {
+                        this.displayMessage('Solver Cancelled', 2000);
+                        this.solution = null;
+                    } else if (this.solution) {
+                        this.displayMessage(`Solution Found! (${this.placementsChecked.toLocaleString()} positions checked)`, 4000);
+                    } else {
+                        this.displayMessage(`No Solution Found. (${this.placementsChecked.toLocaleString()} positions checked)`, 4000);
+                    }
+                    
+                    this.isCancelled = false;
+                    this.updateSolveButtonState();
+                    this.drawMainBoard();
+                }
+            }
+            
+            getBoardCenter() {
+                const avgQ = Array.from(this.board.grid.values()).reduce((sum, h) => sum + h.q, 0) / this.board.grid.size;
+                const avgR = Array.from(this.board.grid.values()).reduce((sum, h) => sum + h.r, 0) / this.board.grid.size;
+                return this.hexRound(new Hex(avgQ, avgR));
+            }
+
+            async findBestSolutionByPlacingPriorityFirst(priorityMod) {
+                let bestSolutionFound = null;
+                let maxConnections = -1;
+
+                const center = this.getBoardCenter();
+                const promisingStarts = Array.from(this.board.grid.values())
+                    .sort((a, b) => a.distance(center) - b.distance(center))
+                    .slice(0, 25); 
+
+                const otherMods = this.mods.filter(m => m.id !== priorityMod.id)
+                    .sort((a, b) => b.shape.length - a.shape.length);
+
+                const maxPossibleConnections = otherMods.length;
+
+                for (const startHex of promisingStarts) {
+                    if (this.isCancelled) throw new Error('Cancelled');
+                    for (let rotation = 0; rotation < 6; rotation++) {
+                        const absoluteShape = this.getRotatedShape(priorityMod.shape, rotation).map(h => h.add(startHex));
+                        
+                        if (this.canPlace(absoluteShape, new Set())) {
+                            const occupied = new Set(absoluteShape.map(h => h.toString()));
+                            const placements = [{ mod: priorityMod, absoluteShape }];
+                            
+                            const subSolution = await this.backtrack(otherMods, occupied, placements);
+                            
+                            if (subSolution) {
+                                const connections = this.countConnections(subSolution.find(p => p.mod.id === priorityMod.id), subSolution);
+                                if (connections > maxConnections) {
+                                    maxConnections = connections;
+                                    bestSolutionFound = subSolution;
+                                    if (maxConnections === maxPossibleConnections) {
+                                        return bestSolutionFound;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    await new Promise(resolve => setTimeout(resolve, 0));
+                }
+                return bestSolutionFound;
+            }
+
+            async backtrack(modsToPlace, occupiedHexes, currentPlacements) {
+                if (this.isCancelled) throw new Error('Cancelled');
+                if (modsToPlace.length === 0) return currentPlacements;
+
+                await new Promise(resolve => setTimeout(resolve, 0));
+                const [currentMod, ...remainingMods] = modsToPlace;
+                for (const startHex of this.board.grid.values()) {
+                    if (this.isCancelled) throw new Error('Cancelled');
+                    for (let rotation = 0; rotation < 6; rotation++) {
+                        this.placementsChecked++;
+                        const absoluteShape = this.getRotatedShape(currentMod.shape, rotation).map(h => h.add(startHex));
+                        if (this.canPlace(absoluteShape, occupiedHexes)) {
+                            const newOccupied = new Set(occupiedHexes);
+                            absoluteShape.forEach(h => newOccupied.add(h.toString()));
+                            const newPlacements = [...currentPlacements, { mod: currentMod, absoluteShape }];
+                            const result = await this.backtrack(remainingMods, newOccupied, newPlacements);
+                            if (result) return result;
+                        }
+                    }
+                }
+                return null;
+            }
+
+            canPlace(absoluteShape, occupiedHexes) {
+                return absoluteShape.every(hex => {
+                    const hexStr = hex.toString();
+                    return this.board.grid.has(hexStr) && !occupiedHexes.has(hexStr);
+                });
+            }
+            
+            getRotatedShape(shape, rotation) {
+                if (rotation === 0) return shape;
+                const center = new Hex(0, 0);
+                return shape.map(h => h.rotate(center, rotation));
+            }
+
+            getHexNeighbors(hex) {
+                const directions = [new Hex(1, 0), new Hex(1, -1), new Hex(0, -1), new Hex(-1, 0), new Hex(-1, 1), new Hex(0, 1)];
+                return directions.map(dir => hex.add(dir));
+            }
+
+            countConnections(placedPriorityMod, allPlacements) {
+                if (!placedPriorityMod) return 0;
+                
+                const hexToModIdMap = new Map();
+                allPlacements.forEach(p => {
+                    if (p.mod.id !== placedPriorityMod.mod.id) {
+                        p.absoluteShape.forEach(h => hexToModIdMap.set(h.toString(), p.mod.id));
+                    }
+                });
+
+                const touchedModIds = new Set();
+
+                placedPriorityMod.absoluteShape.forEach(hex => {
+                    this.getHexNeighbors(hex).forEach(neighbor => {
+                        const neighborStr = neighbor.toString();
+                        if (hexToModIdMap.has(neighborStr)) {
+                            touchedModIds.add(hexToModIdMap.get(neighborStr));
+                        }
+                    });
+                });
+
+                return touchedModIds.size;
+            }
+
+            displayMessage(msg, duration) {
+                this.statusMessageEl.textContent = msg;
+                this.statusMessageEl.style.opacity = 1;
+                if (duration !== Infinity) {
+                    setTimeout(() => { this.statusMessageEl.style.opacity = 0; }, duration);
+                }
+            }
+        }
+
+        window.onload = () => new ModSolverApp();
+    </script>
+</body>
+</html>
