@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mycopunk Mod Solver</title>
+    <title>Mycopunk Mod Solver (Optimized)</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
@@ -172,6 +172,7 @@
             pointer-events: none;
             opacity: 0;
             transition: opacity 0.3s;
+            z-index: 10;
         }
 
         @media (max-width: 1000px) {
@@ -232,6 +233,228 @@
         </div>
     </div>
 
+    <!-- 
+        This script tag contains the logic for our Web Worker.
+        By giving it a special type, the browser won't execute it immediately.
+        We will read its content as a string and create a Blob URL to launch the worker,
+        keeping everything neatly in a single HTML file.
+    -->
+    <script type="javascript/worker" id="solver-worker">
+        class Hex {
+            constructor(q, r) { this.q = q; this.r = r; this.s = -q - r; }
+            toString() { return `${this.q},${this.r}`; }
+            add(other) { return new Hex(this.q + other.q, this.r + other.r); }
+            subtract(other) { return new Hex(this.q - other.q, this.r - other.r); }
+            rotate(center, steps = 1) {
+                let vec = this.subtract(center);
+                for (let i = 0; i < steps; i++) {
+                    const { q, r, s } = vec;
+                    vec = new Hex(-r, -s);
+                }
+                return vec.add(center);
+            }
+        }
+
+        let isCancelled = false;
+        let placementsChecked = 0;
+
+        self.onmessage = function(e) {
+            const { type, payload } = e.data;
+            if (type === 'solve') {
+                isCancelled = false;
+                placementsChecked = 0;
+                const solution = solve(payload);
+                self.postMessage({ type: 'result', payload: { solution, placementsChecked } });
+            } else if (type === 'cancel') {
+                isCancelled = true;
+            }
+        };
+
+        function precomputeRotations(mods) {
+            const rotationCenter = new Hex(0, 0);
+            return mods.map(mod => {
+                const shape = mod.shape.map(h => new Hex(h.q, h.r));
+                const uniqueRotations = new Map();
+                for (let i = 0; i < 6; i++) {
+                    const rotatedShape = shape.map(h => h.rotate(rotationCenter, i));
+                    const firstHex = rotatedShape[0];
+                    const normalized = rotatedShape.map(h => h.subtract(firstHex));
+                    const key = normalized.map(h => h.toString()).sort().join('|');
+                    if (!uniqueRotations.has(key)) {
+                        uniqueRotations.set(key, normalized);
+                    }
+                }
+                return { ...mod, rotations: Array.from(uniqueRotations.values()) };
+            });
+        }
+
+        function canPlace(absoluteShape, occupiedHexes, boardGridSet) {
+            for (const hex of absoluteShape) {
+                const hexStr = hex.toString();
+                if (!boardGridSet.has(hexStr) || occupiedHexes.has(hexStr)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /**
+         * A robust, exhaustive backtracking solver. It's guaranteed to find a solution if one exists.
+         * It works by picking the first available mod and trying to place it in every possible
+         * valid location on the board, then recursing with the remaining mods.
+         */
+        function backtrack(modsToPlace, occupiedHexes, currentPlacements, boardGridSet, boardHexes) {
+            if (isCancelled) throw new Error('Cancelled');
+            if (modsToPlace.length === 0) return currentPlacements;
+
+            const [currentMod, ...remainingMods] = modsToPlace;
+
+            // Iterate through every possible starting hex on the board for the current mod.
+            for (const startHex of boardHexes) {
+                // An optimization: if the anchor point is already taken, we can't place here.
+                if (occupiedHexes.has(startHex.toString())) {
+                    continue;
+                }
+
+                // Try every unique rotation of the current mod.
+                for (const rotation of currentMod.rotations) {
+                    placementsChecked++;
+                    if (placementsChecked % 50000 === 0) {
+                         self.postMessage({ type: 'progress', payload: { placementsChecked } });
+                    }
+
+                    // The shape is relative to (0,0), so adding startHex makes it absolute.
+                    const absoluteShape = rotation.map(h => h.add(startHex));
+
+                    if (canPlace(absoluteShape, occupiedHexes, boardGridSet)) {
+                        const shapeStrings = absoluteShape.map(h => h.toString());
+                        shapeStrings.forEach(s => occupiedHexes.add(s));
+                        const newPlacements = [...currentPlacements, { mod: currentMod, absoluteShape }];
+                        
+                        // Recurse with the rest of the mods.
+                        const result = backtrack(remainingMods, occupiedHexes, newPlacements, boardGridSet, boardHexes);
+                        if (result) return result; // Solution found!
+
+                        // Backtrack: undo the placement and try the next position/rotation.
+                        shapeStrings.forEach(s => occupiedHexes.delete(s));
+                    }
+                }
+            }
+
+            // If we've tried placing the current mod everywhere and found no solution path, fail.
+            return null;
+        }
+
+        function getHexNeighbors(hex) {
+            const directions = [new Hex(1, 0), new Hex(1, -1), new Hex(0, -1), new Hex(-1, 0), new Hex(-1, 1), new Hex(0, 1)];
+            return directions.map(dir => hex.add(dir));
+        }
+
+        function countConnections(placedPriorityMod, allPlacements) {
+            if (!placedPriorityMod) return 0;
+            const hexToModIdMap = new Map();
+            allPlacements.forEach(p => {
+                if (p.mod.id !== placedPriorityMod.mod.id) {
+                    p.absoluteShape.forEach(h => hexToModIdMap.set(h.toString(), p.mod.id));
+                }
+            });
+            const touchedModIds = new Set();
+            placedPriorityMod.absoluteShape.forEach(hex => {
+                getHexNeighbors(hex).forEach(neighbor => {
+                    const neighborStr = neighbor.toString();
+                    if (hexToModIdMap.has(neighborStr)) {
+                        touchedModIds.add(hexToModIdMap.get(neighborStr));
+                    }
+                });
+            });
+            return touchedModIds.size;
+        }
+
+        function findBestPrioritySolution(board, mods) {
+            let bestSolutionFound = null;
+            let maxConnections = -1;
+
+            const boardHexes = board.grid.map(h => new Hex(h.q, h.r));
+            const boardGridSet = new Set(boardHexes.map(h => h.toString()));
+            
+            const priorityMod = mods.find(m => m.isPriority);
+            const otherMods = mods.filter(m => m.id !== priorityMod.id);
+
+            const modsWithRotations = precomputeRotations([priorityMod, ...otherMods]);
+            const priorityModRotated = modsWithRotations[0];
+            const otherModsRotated = modsWithRotations.slice(1).sort((a, b) => b.shape.length - a.shape.length);
+
+            // Exhaustively try placing the priority mod in every possible position.
+            for (const startHex of boardHexes) {
+                if (isCancelled) throw new Error('Cancelled');
+                for (const rotation of priorityModRotated.rotations) {
+                    placementsChecked++;
+                    if (placementsChecked % 20000 === 0) {
+                         self.postMessage({ type: 'progress', payload: { placementsChecked } });
+                    }
+
+                    const absoluteShape = rotation.map(h => h.add(startHex));
+
+                    if (canPlace(absoluteShape, new Set(), boardGridSet)) {
+                        const occupied = new Set(absoluteShape.map(h => h.toString()));
+                        const placements = [{ mod: priorityModRotated, absoluteShape }];
+                        
+                        // For each valid placement, try to solve the rest of the board.
+                        const subSolution = backtrack(otherModsRotated, occupied, placements, boardGridSet, boardHexes);
+                        
+                        if (subSolution) {
+                            const connections = countConnections(subSolution.find(p => p.mod.id === priorityMod.id), subSolution);
+                            if (connections > maxConnections) {
+                                maxConnections = connections;
+                                bestSolutionFound = subSolution;
+                                // Send intermediate solutions back to the main thread to be displayed.
+                                const serializableSolution = bestSolutionFound.map(p => ({
+                                    ...p,
+                                    mod: { id: p.mod.id, color: p.mod.color, isPriority: p.mod.isPriority, shape: p.mod.shape },
+                                    absoluteShape: p.absoluteShape.map(h => ({ q: h.q, r: h.r }))
+                                }));
+                                self.postMessage({ type: 'intermediate_solution', payload: { solution: serializableSolution, connections } });
+                            }
+                        }
+                    }
+                }
+            }
+            return bestSolutionFound;
+        }
+
+        function solve({ board, mods }) {
+            try {
+                const priorityMod = mods.find(m => m.isPriority);
+                let solution;
+                
+                const boardHexes = board.grid.map(h => new Hex(h.q, h.r));
+                const boardGridSet = new Set(boardHexes.map(h => h.toString()));
+
+                if (priorityMod) {
+                    solution = findBestPrioritySolution(board, mods);
+                } else {
+                    const sortedMods = [...mods].sort((a, b) => b.shape.length - a.shape.length);
+                    const modsWithRotations = precomputeRotations(sortedMods);
+                    solution = backtrack(modsWithRotations, new Set(), [], boardGridSet, boardHexes);
+                }
+
+                // Serialize the final solution for sending back to the main thread.
+                return solution ? solution.map(p => ({
+                    ...p,
+                    mod: { id: p.mod.id, color: p.mod.color, isPriority: p.mod.isPriority, shape: p.mod.shape },
+                    absoluteShape: p.absoluteShape.map(h => ({ q: h.q, r: h.r }))
+                })) : null;
+
+            } catch (e) {
+                if (e.message === 'Cancelled') {
+                    console.log('Solver execution cancelled.');
+                    return null;
+                }
+                throw e;
+            }
+        }
+    </script>
+
     <script type="module">
         class Hex {
             constructor(q, r) { this.q = q; this.r = r; this.s = -q - r; }
@@ -278,15 +501,15 @@
                 this.mods = [];
                 this.solution = null;
                 this.isSolving = false;
-                this.isCancelled = false;
-                this.placementsChecked = 0;
-                this.progressInterval = null;
+                this.solverWorker = null;
+                this.messageTimeout = null;
 
                 this.init();
             }
 
             init() {
                 this.setupEventListeners();
+                this.setupSolverWorker();
                 this.loadMods();
                 this.createGrids();
                 this.resizeAndDrawAll();
@@ -304,6 +527,23 @@
                 document.querySelectorAll('input[name="rarity"]').forEach(radio => {
                     radio.addEventListener('change', () => this.drawCreator());
                 });
+            }
+
+            setupSolverWorker() {
+                const workerScript = document.getElementById('solver-worker').textContent;
+                const workerBlob = new Blob([workerScript], { type: 'application/javascript' });
+                this.solverWorker = new Worker(URL.createObjectURL(workerBlob));
+
+                this.solverWorker.onmessage = (e) => {
+                    const { type, payload } = e.data;
+                    if (type === 'progress') {
+                        this.displayMessage(`Solving... (${payload.placementsChecked.toLocaleString()} positions checked)`, Infinity);
+                    } else if (type === 'intermediate_solution') {
+                        this.handleIntermediateSolution(payload);
+                    } else if (type === 'result') {
+                        this.handleSolverResult(payload);
+                    }
+                };
             }
 
             createGrids() {
@@ -358,6 +598,7 @@
                 const normalizedShape = shapeCoords.map(h => h.subtract(firstHex));
                 this.mods.push({ id: Date.now(), shape: normalizedShape, color, isPriority });
                 this.creator.shape.clear();
+                document.getElementById('priority-mod').checked = false;
                 this.renderModList();
                 this.drawCreator();
                 this.updateSolveButtonState();
@@ -377,7 +618,11 @@
 
             saveMods() {
                 try {
-                    localStorage.setItem('mycopunkSolverMods', JSON.stringify(this.mods));
+                    const serializableMods = this.mods.map(mod => ({
+                        ...mod,
+                        shape: mod.shape.map(h => ({ q: h.q, r: h.r }))
+                    }));
+                    localStorage.setItem('mycopunkSolverMods', JSON.stringify(serializableMods));
                 } catch (e) {
                     console.error("Could not save mods to localStorage:", e);
                 }
@@ -545,192 +790,85 @@
                     minQ = Math.min(minQ, h.q); maxQ = Math.max(maxQ, h.q);
                     minR = Math.min(minR, h.r); maxR = Math.max(maxR, h.r);
                 });
-                return { minQ, maxQ, minR, maxR, cols: maxQ - minQ + 1, rows: maxR - minR + 1 };
+                return { minQ, maxQ, minR, maxR, cols: maxQ - minQ + 1, rows: maxR - minQ + 1 };
             }
 
-            // --- SOLVER LOGIC ---
+            // --- NEW WORKER-BASED SOLVER LOGIC ---
 
             handleSolveClick() {
                 if (this.isSolving) {
-                    this.isCancelled = true;
-                    clearInterval(this.progressInterval);
-                    this.displayMessage('Cancelling...', Infinity);
+                    this.solverWorker.postMessage({ type: 'cancel' });
+                    // The result handler will set isSolving to false
                 } else {
                     this.solve();
                 }
             }
 
-            async solve() {
+            solve() {
                 this.isSolving = true;
-                this.isCancelled = false;
                 this.solution = null;
-                this.placementsChecked = 0;
                 this.updateSolveButtonState();
                 this.drawMainBoard();
+                this.displayMessage('Starting solver...', Infinity);
 
-                this.progressInterval = setInterval(() => {
-                    this.displayMessage(`Solving... (${this.placementsChecked.toLocaleString()} positions checked)`, Infinity);
-                }, 100);
-
-                try {
-                    await new Promise(resolve => setTimeout(resolve, 10));
-
-                    const totalModArea = this.mods.reduce((sum, mod) => sum + mod.shape.length, 0);
-                    if (totalModArea > this.board.grid.size) {
-                        this.displayMessage('Not enough space on board!', 3000);
-                        return;
-                    }
-
-                    const priorityMod = this.mods.find(m => m.isPriority);
-                    let finalSolution = null;
-
-                    if (priorityMod) {
-                        finalSolution = await this.findBestSolutionByPlacingPriorityFirst(priorityMod);
-                    } else {
-                        const sortedMods = [...this.mods].sort((a, b) => b.shape.length - a.shape.length);
-                        finalSolution = await this.backtrack(sortedMods, new Set(), []);
-                    }
-                    this.solution = finalSolution;
-
-                } catch (e) {
-                    if (e.message !== 'Cancelled') throw e;
-                } finally {
-                    clearInterval(this.progressInterval);
+                const totalModArea = this.mods.reduce((sum, mod) => sum + mod.shape.length, 0);
+                if (totalModArea > this.board.grid.size) {
+                    this.displayMessage('Not enough space on board!', 3000);
                     this.isSolving = false;
-                    
-                    if (this.isCancelled) {
-                        this.displayMessage('Solver Cancelled', 2000);
-                        this.solution = null;
-                    } else if (this.solution) {
-                        this.displayMessage(`Solution Found! (${this.placementsChecked.toLocaleString()} positions checked)`, 4000);
-                    } else {
-                        this.displayMessage(`No Solution Found. (${this.placementsChecked.toLocaleString()} positions checked)`, 4000);
-                    }
-                    
-                    this.isCancelled = false;
                     this.updateSolveButtonState();
-                    this.drawMainBoard();
+                    return;
                 }
+
+                const serializableBoard = {
+                    grid: Array.from(this.board.grid.values()).map(h => ({ q: h.q, r: h.r }))
+                };
+                const serializableMods = this.mods.map(mod => ({
+                    ...mod,
+                    shape: mod.shape.map(h => ({ q: h.q, r: h.r }))
+                }));
+
+                this.solverWorker.postMessage({
+                    type: 'solve',
+                    payload: { board: serializableBoard, mods: serializableMods }
+                });
+            }
+
+            handleIntermediateSolution({ solution, connections }) {
+                this.solution = solution.map(p => ({
+                    ...p,
+                    absoluteShape: p.absoluteShape.map(h => new Hex(h.q, h.r))
+                }));
+                this.displayMessage(`Found solution with ${connections} connections... Searching for better...`, Infinity);
+                this.drawMainBoard();
             }
             
-            getBoardCenter() {
-                const avgQ = Array.from(this.board.grid.values()).reduce((sum, h) => sum + h.q, 0) / this.board.grid.size;
-                const avgR = Array.from(this.board.grid.values()).reduce((sum, h) => sum + h.r, 0) / this.board.grid.size;
-                return this.hexRound(new Hex(avgQ, avgR));
-            }
+            handleSolverResult({ solution, placementsChecked }) {
+                this.isSolving = false;
+                this.updateSolveButtonState();
 
-            async findBestSolutionByPlacingPriorityFirst(priorityMod) {
-                let bestSolutionFound = null;
-                let maxConnections = -1;
-
-                const center = this.getBoardCenter();
-                const promisingStarts = Array.from(this.board.grid.values())
-                    .sort((a, b) => a.distance(center) - b.distance(center))
-                    .slice(0, 25); 
-
-                const otherMods = this.mods.filter(m => m.id !== priorityMod.id)
-                    .sort((a, b) => b.shape.length - a.shape.length);
-
-                const maxPossibleConnections = otherMods.length;
-
-                for (const startHex of promisingStarts) {
-                    if (this.isCancelled) throw new Error('Cancelled');
-                    for (let rotation = 0; rotation < 6; rotation++) {
-                        const absoluteShape = this.getRotatedShape(priorityMod.shape, rotation).map(h => h.add(startHex));
-                        
-                        if (this.canPlace(absoluteShape, new Set())) {
-                            const occupied = new Set(absoluteShape.map(h => h.toString()));
-                            const placements = [{ mod: priorityMod, absoluteShape }];
-                            
-                            const subSolution = await this.backtrack(otherMods, occupied, placements);
-                            
-                            if (subSolution) {
-                                const connections = this.countConnections(subSolution.find(p => p.mod.id === priorityMod.id), subSolution);
-                                if (connections > maxConnections) {
-                                    maxConnections = connections;
-                                    bestSolutionFound = subSolution;
-                                    if (maxConnections === maxPossibleConnections) {
-                                        return bestSolutionFound;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    await new Promise(resolve => setTimeout(resolve, 0));
-                }
-                return bestSolutionFound;
-            }
-
-            async backtrack(modsToPlace, occupiedHexes, currentPlacements) {
-                if (this.isCancelled) throw new Error('Cancelled');
-                if (modsToPlace.length === 0) return currentPlacements;
-
-                await new Promise(resolve => setTimeout(resolve, 0));
-                const [currentMod, ...remainingMods] = modsToPlace;
-                for (const startHex of this.board.grid.values()) {
-                    if (this.isCancelled) throw new Error('Cancelled');
-                    for (let rotation = 0; rotation < 6; rotation++) {
-                        this.placementsChecked++;
-                        const absoluteShape = this.getRotatedShape(currentMod.shape, rotation).map(h => h.add(startHex));
-                        if (this.canPlace(absoluteShape, occupiedHexes)) {
-                            const newOccupied = new Set(occupiedHexes);
-                            absoluteShape.forEach(h => newOccupied.add(h.toString()));
-                            const newPlacements = [...currentPlacements, { mod: currentMod, absoluteShape }];
-                            const result = await this.backtrack(remainingMods, newOccupied, newPlacements);
-                            if (result) return result;
-                        }
+                if (solution) {
+                    this.solution = solution.map(p => ({
+                        ...p,
+                        absoluteShape: p.absoluteShape.map(h => new Hex(h.q, h.r))
+                    }));
+                    this.displayMessage(`Solution Found! (${placementsChecked.toLocaleString()} positions checked)`, 4000);
+                } else {
+                    // Only show "No solution" if we didn't already find an intermediate one
+                    if (!this.solution) {
+                        this.displayMessage(`No Solution Found. (${placementsChecked.toLocaleString()} positions checked)`, 4000);
+                    } else {
+                        this.displayMessage(`Search Complete! Best solution found. (${placementsChecked.toLocaleString()} positions checked)`, 4000);
                     }
                 }
-                return null;
-            }
-
-            canPlace(absoluteShape, occupiedHexes) {
-                return absoluteShape.every(hex => {
-                    const hexStr = hex.toString();
-                    return this.board.grid.has(hexStr) && !occupiedHexes.has(hexStr);
-                });
-            }
-            
-            getRotatedShape(shape, rotation) {
-                if (rotation === 0) return shape;
-                const center = new Hex(0, 0);
-                return shape.map(h => h.rotate(center, rotation));
-            }
-
-            getHexNeighbors(hex) {
-                const directions = [new Hex(1, 0), new Hex(1, -1), new Hex(0, -1), new Hex(-1, 0), new Hex(-1, 1), new Hex(0, 1)];
-                return directions.map(dir => hex.add(dir));
-            }
-
-            countConnections(placedPriorityMod, allPlacements) {
-                if (!placedPriorityMod) return 0;
-                
-                const hexToModIdMap = new Map();
-                allPlacements.forEach(p => {
-                    if (p.mod.id !== placedPriorityMod.mod.id) {
-                        p.absoluteShape.forEach(h => hexToModIdMap.set(h.toString(), p.mod.id));
-                    }
-                });
-
-                const touchedModIds = new Set();
-
-                placedPriorityMod.absoluteShape.forEach(hex => {
-                    this.getHexNeighbors(hex).forEach(neighbor => {
-                        const neighborStr = neighbor.toString();
-                        if (hexToModIdMap.has(neighborStr)) {
-                            touchedModIds.add(hexToModIdMap.get(neighborStr));
-                        }
-                    });
-                });
-
-                return touchedModIds.size;
+                this.drawMainBoard();
             }
 
             displayMessage(msg, duration) {
                 this.statusMessageEl.textContent = msg;
                 this.statusMessageEl.style.opacity = 1;
+                if (this.messageTimeout) clearTimeout(this.messageTimeout);
                 if (duration !== Infinity) {
-                    setTimeout(() => { this.statusMessageEl.style.opacity = 0; }, duration);
+                    this.messageTimeout = setTimeout(() => { this.statusMessageEl.style.opacity = 0; }, duration);
                 }
             }
         }
