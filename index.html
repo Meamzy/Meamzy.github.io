@@ -336,21 +336,25 @@
         function canPlace(modShape, startR, startC) {
             for (const piece of modShape) {
                 const { c, r } = axialToOffset(startC, startR, piece);
-                if (r < 0 || r >= boardHeight || c < 0 || c >= boardWidth || boardState[r][c] !== 0) return false;
+                // ❌ reject if outside bounds
+                if (r < 0 || r >= boardHeight || c < 0 || c >= boardWidth) return false;
+                // ❌ reject if occupied
+                if (boardState[r][c] !== 0) return false;
             }
             return true;
         }
 
         function placeMod(modShape, startR, startC, modInstanceId) {
+            // assumes canPlace already validated everything
             for (const piece of modShape) {
                 const { c, r } = axialToOffset(startC, startR, piece);
-                if (r >= 0 && r < boardHeight && c >= 0 && c < boardWidth) boardState[r][c] = modInstanceId;
+                boardState[r][c] = modInstanceId;
             }
         }
         function removeMod(modShape, startR, startC) {
             for (const piece of modShape) {
                 const { c, r } = axialToOffset(startC, startR, piece);
-                if (r >= 0 && r < boardHeight && c >= 0 && c < boardWidth) boardState[r][c] = 0;
+                boardState[r][c] = 0;
             }
         }
 
