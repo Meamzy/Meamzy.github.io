@@ -204,7 +204,21 @@
         }
 
         function offsetToAxial(c, r) { return { q: c - Math.floor(r / 2), r: r }; }
-        function rotateCoord(q, r) { return { q: -r, r: q + r }; }
+        function rotateCoord(q, r) {
+            // axial (q, r) -> cube (x, y, z)
+            let x = q;
+            let z = r;
+            let y = -x - z;
+
+            // 60° clockwise rotation in cube
+            let newX = -z;
+            let newY = -x;
+            let newZ = -y;
+
+            // back to axial
+            return { q: newX, r: newZ };
+        }
+
         function flipCoord(q, r) { return { q: -q, r: r }; }
 
         function handleAddMod() {
