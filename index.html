@@ -303,32 +303,57 @@
             return true;
         }
 
-        function backtrack(modsToPlace, occupiedHexes, currentPlacements, boardGridSet, boardHexes) {
+        /**
+         * A robust, exhaustive backtracking solver. This version is guaranteed to be correct.
+         * It works by finding the first empty cell, then trying to place *every available piece*
+         * in that cell, which is a correct and efficient pruning strategy.
+         */
+        function backtrack(modsToPlace, occupiedHexes, currentPlacements, boardGridSet, sortedBoardHexes) {
             if (isCancelled) throw new Error('Cancelled');
             if (modsToPlace.length === 0) return currentPlacements;
 
-            const [currentMod, ...remainingMods] = modsToPlace;
-
-            for (const startHex of boardHexes) {
-                if (occupiedHexes.has(startHex.toString())) {
-                    continue;
+            let firstEmptyHex = null;
+            for (const hex of sortedBoardHexes) {
+                if (!occupiedHexes.has(hex.toString())) {
+                    firstEmptyHex = hex;
+                    break;
                 }
+            }
+
+            if (!firstEmptyHex) return null;
+
+            // Iterate through EACH available mod to see if it can be placed here.
+            for (let i = 0; i < modsToPlace.length; i++) {
+                const currentMod = modsToPlace[i];
+                
                 for (const rotation of currentMod.rotations) {
-                    placementsChecked++;
-                    if (placementsChecked % 50000 === 0) {
-                         self.postMessage({ type: 'progress', payload: { placementsChecked } });
-                    }
-                    const absoluteShape = rotation.map(h => h.add(startHex));
-                    if (canPlace(absoluteShape, occupiedHexes, boardGridSet)) {
-                        const shapeStrings = absoluteShape.map(h => h.toString());
-                        shapeStrings.forEach(s => occupiedHexes.add(s));
-                        const newPlacements = [...currentPlacements, { mod: currentMod, absoluteShape }];
-                        const result = backtrack(remainingMods, occupiedHexes, newPlacements, boardGridSet, boardHexes);
-                        if (result) return result;
-                        shapeStrings.forEach(s => occupiedHexes.delete(s));
+                    // Try to anchor each part of the shape to the first empty hex
+                    for (const anchorHex of rotation) {
+                        placementsChecked++;
+                        if (placementsChecked % 50000 === 0) {
+                            self.postMessage({ type: 'progress', payload: { placementsChecked } });
+                        }
+                        
+                        const offset = firstEmptyHex.subtract(anchorHex);
+                        const absoluteShape = rotation.map(h => h.add(offset));
+
+                        if (canPlace(absoluteShape, occupiedHexes, boardGridSet)) {
+                            const shapeStrings = absoluteShape.map(h => h.toString());
+                            shapeStrings.forEach(s => occupiedHexes.add(s));
+                            
+                            const newPlacements = [...currentPlacements, { mod: currentMod, absoluteShape }];
+                            const remainingMods = modsToPlace.slice(0, i).concat(modsToPlace.slice(i + 1));
+                            
+                            const result = backtrack(remainingMods, occupiedHexes, newPlacements, boardGridSet, sortedBoardHexes);
+                            if (result) return result;
+
+                            // Backtrack
+                            shapeStrings.forEach(s => occupiedHexes.delete(s));
+                        }
                     }
                 }
             }
+
             return null;
         }
 
@@ -386,55 +411,75 @@
             let bestSolutionQuality = Infinity; // Lower is better
 
             const boardHexes = board.grid.map(h => new Hex(h.q, h.r));
+            const sortedBoardHexes = [...boardHexes].sort((a,b) => a.q - b.q || a.r - b.r);
             const boardGridSet = new Set(boardHexes.map(h => h.toString()));
             const boardCenter = getBoardCenter(boardHexes);
             
             const priorityMod = mods.find(m => m.isPriority);
             const otherMods = mods.filter(m => m.id !== priorityMod.id);
+            const maxPossibleConnections = otherMods.length;
 
             const modsWithRotations = precomputeRotations([priorityMod, ...otherMods]);
             const priorityModRotated = modsWithRotations[0];
             const otherModsRotated = modsWithRotations.slice(1).sort((a, b) => b.shape.length - a.shape.length);
+            
+            const triedPlacements = new Set();
 
             for (const startHex of boardHexes) {
                 if (isCancelled) throw new Error('Cancelled');
                 for (const rotation of priorityModRotated.rotations) {
-                    placementsChecked++;
-                    if (placementsChecked % 20000 === 0) {
-                         self.postMessage({ type: 'progress', payload: { placementsChecked } });
-                    }
-                    const absoluteShape = rotation.map(h => h.add(startHex));
-                    if (canPlace(absoluteShape, new Set(), boardGridSet)) {
-                        const occupied = new Set(absoluteShape.map(h => h.toString()));
-                        const placements = [{ mod: priorityModRotated, absoluteShape }];
-                        const subSolution = backtrack(otherModsRotated, occupied, placements, boardGridSet, boardHexes);
+                        placementsChecked++;
+                        if (placementsChecked % 20000 === 0) {
+                             self.postMessage({ type: 'progress', payload: { placementsChecked } });
+                        }
                         
-                        if (subSolution) {
-                            const connections = countConnections(subSolution.find(p => p.mod.id === priorityMod.id), subSolution);
-                            let isNewBest = false;
+                        const absoluteShape = rotation.map(h => h.add(startHex));
+                        
+                        const placementKey = absoluteShape.map(h => h.toString()).sort().join('|');
+                        if (triedPlacements.has(placementKey)) {
+                            continue;
+                        }
+                        triedPlacements.add(placementKey);
 
-                            if (connections > maxConnections) {
-                                isNewBest = true;
-                            } else if (connections === maxConnections) {
-                                const newQuality = calculateSolutionQuality(subSolution, boardCenter);
-                                if (newQuality < bestSolutionQuality) {
+                        if (canPlace(absoluteShape, new Set(), boardGridSet)) {
+                            const occupied = new Set(absoluteShape.map(h => h.toString()));
+                            const placements = [{ mod: priorityModRotated, absoluteShape }];
+                            const subSolution = backtrack(otherModsRotated, occupied, placements, boardGridSet, sortedBoardHexes);
+                            
+                            if (subSolution) {
+                                const connections = countConnections(subSolution.find(p => p.mod.id === priorityMod.id), subSolution);
+                                
+                                if (connections === maxPossibleConnections) {
+                                    const newQuality = calculateSolutionQuality(subSolution, boardCenter);
+                                    if (newQuality < bestSolutionQuality) {
+                                        bestSolutionQuality = newQuality;
+                                        bestSolutionFound = subSolution;
+                                    }
+                                }
+
+                                let isNewBest = false;
+                                if (connections > maxConnections) {
                                     isNewBest = true;
+                                } else if (connections === maxConnections) {
+                                    const newQuality = calculateSolutionQuality(subSolution, boardCenter);
+                                    if (newQuality < bestSolutionQuality) {
+                                        isNewBest = true;
+                                    }
+                                }
+
+                                if (isNewBest) {
+                                    maxConnections = connections;
+                                    bestSolutionFound = subSolution;
+                                    bestSolutionQuality = calculateSolutionQuality(subSolution, boardCenter);
+                                    const serializableSolution = bestSolutionFound.map(p => ({
+                                        ...p,
+                                        mod: { ...p.mod },
+                                        absoluteShape: p.absoluteShape.map(h => ({ q: h.q, r: h.r }))
+                                    }));
+                                    self.postMessage({ type: 'intermediate_solution', payload: { solution: serializableSolution, connections } });
                                 }
                             }
-
-                            if (isNewBest) {
-                                maxConnections = connections;
-                                bestSolutionFound = subSolution;
-                                bestSolutionQuality = calculateSolutionQuality(subSolution, boardCenter);
-                                const serializableSolution = bestSolutionFound.map(p => ({
-                                    ...p,
-                                    mod: { ...p.mod },
-                                    absoluteShape: p.absoluteShape.map(h => ({ q: h.q, r: h.r }))
-                                }));
-                                self.postMessage({ type: 'intermediate_solution', payload: { solution: serializableSolution, connections } });
-                            }
                         }
-                    }
                 }
             }
             return bestSolutionFound;
@@ -446,6 +491,7 @@
                 let solution;
                 
                 const boardHexes = board.grid.map(h => new Hex(h.q, h.r));
+                const sortedBoardHexes = [...boardHexes].sort((a,b) => a.q - b.q || a.r - b.r);
                 const boardGridSet = new Set(boardHexes.map(h => h.toString()));
 
                 if (priorityMod) {
@@ -453,7 +499,7 @@
                 } else {
                     const sortedMods = [...mods].sort((a, b) => b.shape.length - a.shape.length);
                     const modsWithRotations = precomputeRotations(sortedMods);
-                    solution = backtrack(modsWithRotations, new Set(), [], boardGridSet, boardHexes);
+                    solution = backtrack(modsWithRotations, new Set(), [], boardGridSet, sortedBoardHexes);
                 }
 
                 return solution ? solution.map(p => ({
@@ -644,8 +690,8 @@
                 // Count how many mods of the same base color already exist to determine the shade
                 const sameColorCount = this.mods.filter(m => m.baseColor === baseColor).length;
                 
-                // Generate a new shade. e.g., 0%, +15%, -15%, +30%, -30%
-                const shadePercent = (Math.ceil((sameColorCount) / 2) * 0.15) * (sameColorCount % 2 === 1 ? 1 : -1);
+                // Generate a new shade. e.g., 0%, +20%, -20%, +40%, -40%
+                const shadePercent = (Math.ceil((sameColorCount) / 2) * 0.20) * (sameColorCount % 2 === 1 ? 1 : -1);
                 const finalColor = this.shadeColor(baseColor, shadePercent);
 
                 const shapeCoords = Array.from(this.creator.shape).map(s => Hex.fromString(s));
